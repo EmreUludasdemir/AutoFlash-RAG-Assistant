@@ -121,6 +121,8 @@ def main():
 
         print("Answer: ", end="", flush=True)
         for chunk in chat_client.complete_streaming_chat(messages):
+            if not chunk.choices:
+                continue
             content = chunk.choices[0].delta.content
             if content:
                 print(content, end="", flush=True)
