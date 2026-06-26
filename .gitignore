@@ -6,3 +6,4 @@ __pycache__/
 data/index.json
 data/raw/*
 !data/raw/.gitkeep
+eval/answer_quality_report.json

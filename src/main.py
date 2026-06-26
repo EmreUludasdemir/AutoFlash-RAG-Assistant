@@ -37,7 +37,19 @@ def is_out_of_scope_security_query(query: str) -> bool:
     )
     procedural_detail = any(
         term in lowered
-        for term in ("algorithm", "recover", "recovery", "compute", "calculate", "crack")
+        for term in (
+            "algorithm",
+            "algoritma",
+            "algoritması",
+            "recover",
+            "recovery",
+            "compute",
+            "calculate",
+            "hesapla",
+            "crack",
+            "kır",
+            "kir",
+        )
     )
     return sensitive_topic and procedural_detail
 
@@ -122,6 +134,12 @@ def retrieval_query_for_rerank(query: str) -> str:
 
 def abstention_answer(query: str) -> str:
     if is_turkish_query(query):
+        if is_out_of_scope_security_query(query):
+            return (
+                "Bilmiyorum; bu istek güvenlik-bypass veya seed/key recovery "
+                "ayrıntısı istediği için kapsam dışı. Bu bilgi sağlanan yerel "
+                "mühendislik dokümanlarında yer almıyor."
+            )
         return (
             "Bu bilgi sağlanan yerel mühendislik dokümanlarında yok. "
             "Bu nedenle tahmin yürüterek yanıt veremiyorum."

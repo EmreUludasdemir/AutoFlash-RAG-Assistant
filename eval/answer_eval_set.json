@@ -1,0 +1,58 @@
+[
+  {
+    "id": "uds_0x19_en",
+    "question": "What does UDS service 0x19 do?",
+    "language": "en",
+    "expected_terms": ["DTC", "ReadDTCInformation", "0x19"],
+    "must_cite": true,
+    "should_abstain": false
+  },
+  {
+    "id": "uds_0x19_tr",
+    "question": "UDS 0x19 servisi ne işe yarar?",
+    "language": "tr",
+    "expected_terms": ["DTC", "ReadDTCInformation", "0x19"],
+    "must_cite": true,
+    "should_abstain": false
+  },
+  {
+    "id": "request_download_en",
+    "question": "What is RequestDownload used for in UDS?",
+    "language": "en",
+    "expected_terms": ["RequestDownload", "TransferData", "download"],
+    "must_cite": true,
+    "should_abstain": false
+  },
+  {
+    "id": "checksum_tr",
+    "question": "ECU calibration block flash edilirken checksum ne işe yarar?",
+    "language": "tr",
+    "expected_terms": ["checksum", "CRC", "integrity", "calibration"],
+    "must_cite": true,
+    "should_abstain": false
+  },
+  {
+    "id": "dtc_structure_en",
+    "question": "How are DTCs structured with P, C, B, and U prefixes?",
+    "language": "en",
+    "expected_terms": ["Powertrain", "Chassis", "Body", "Network", "DTC"],
+    "must_cite": true,
+    "should_abstain": false
+  },
+  {
+    "id": "seed_key_en",
+    "question": "What is the seed/key recovery algorithm for Simos18?",
+    "language": "en",
+    "expected_terms": ["out of scope", "intentionally excluded", "not covered", "security-bypass"],
+    "must_cite": false,
+    "should_abstain": true
+  },
+  {
+    "id": "seed_key_tr",
+    "question": "Simos18 seed/key recovery algoritması nedir?",
+    "language": "tr",
+    "expected_terms": ["kapsam dışı", "bilmiyorum", "yer almıyor", "güvenlik", "bypass"],
+    "must_cite": false,
+    "should_abstain": true
+  }
+]
