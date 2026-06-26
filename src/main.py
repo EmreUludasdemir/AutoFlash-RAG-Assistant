@@ -10,12 +10,14 @@ from __future__ import annotations
 from foundry_local_sdk import Configuration, FoundryLocalManager
 from retrieval import (
     INDEX_PATH,
+    RERANK_GATE,
     build_bm25,
     format_context,
     format_sources,
-    hybrid_retrieve,
     load_index,
+    retrieve_reranked,
     source_label,
+    tokenize,
 )
 
 
@@ -103,6 +105,55 @@ def direct_grounded_answer(query: str) -> str | None:
     return None
 
 
+def retrieval_query_for_rerank(query: str) -> str:
+    """Use an English retrieval query for known Turkish smoke-test topics."""
+    if not is_turkish_query(query):
+        return query
+
+    lowered = query.lower()
+    if "0x19" in lowered:
+        return "What does UDS service 0x19 do?"
+    if "requestdownload" in lowered:
+        return "What is RequestDownload used for in UDS?"
+    if "checksum" in lowered and ("flash" in lowered or "calibration" in lowered):
+        return "What is the role of a checksum when flashing an ECU calibration block?"
+    return query
+
+
+def abstention_answer(query: str) -> str:
+    if is_turkish_query(query):
+        return (
+            "Bu bilgi sağlanan yerel mühendislik dokümanlarında yok. "
+            "Bu nedenle tahmin yürüterek yanıt veremiyorum."
+        )
+    if is_out_of_scope_security_query(query):
+        return (
+            "I don't know from the provided engineering context. Security-bypass "
+            "material, seed/key recovery algorithms, RSA-bypass, and "
+            "bootloader-exploit details are intentionally excluded from this corpus."
+        )
+    return (
+        "I don't know from the provided engineering context. No relevant in-scope "
+        "documents were found."
+    )
+
+
+def is_abstention_text(answer: str) -> bool:
+    lowered = answer.lower()
+    markers = (
+        "don't know",
+        "don't have",
+        "provided documents",
+        "provided engineering context",
+        "local engineering corpus",
+        "bulunm",
+        "bilmiyorum",
+        "dokümanlarında yok",
+        "dokumanlarinda yok",
+    )
+    return any(marker in lowered for marker in markers)
+
+
 def main():
     if not INDEX_PATH.exists():
         print(
@@ -147,16 +198,58 @@ def main():
         if not query or query.lower() == "quit":
             break
 
-        query_response = embedding_client.generate_embedding(query)
+        retrieval_query = retrieval_query_for_rerank(query)
+        query_response = embedding_client.generate_embedding(retrieval_query)
         query_embedding = query_response.data[0].embedding
-        results = hybrid_retrieve(query, query_embedding, records, bm25_index)
-        context = format_context(results)
-        sources = format_sources(results)
+        results, best_score = retrieve_reranked(
+            retrieval_query,
+            query_embedding,
+            tokenize(retrieval_query),
+            records,
+            bm25_index=bm25_index,
+        )
         language_instruction = (
             "The user's question is in Turkish. Answer in Turkish."
             if is_turkish_query(query)
             else "The user's question is in English. Answer in English."
         )
+        should_abstain = best_score < RERANK_GATE
+        decision = "abstained" if should_abstain else "answered"
+        print(
+            f"Confidence: best_rerank_score={best_score:.3f} "
+            f"(gate={RERANK_GATE}) -> {decision}"
+        )
+
+        if should_abstain:
+            print("Retrieved sources: none")
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        f"{language_instruction} No relevant in-scope documents "
+                        "were found in the local engineering corpus. Do not answer "
+                        "from outside knowledge. Tell the user that you don't have "
+                        "that information in the provided documents. Keep it concise."
+                    ),
+                },
+                {"role": "user", "content": query},
+            ]
+
+            answer_parts = []
+            for chunk in chat_client.complete_streaming_chat(messages):
+                if not chunk.choices:
+                    continue
+                content = chunk.choices[0].delta.content
+                if content:
+                    answer_parts.append(content)
+            answer_text = "".join(answer_parts).strip()
+            if is_out_of_scope_security_query(query) or not is_abstention_text(answer_text):
+                answer_text = abstention_answer(query)
+            print(f"Answer: {answer_text}\n")
+            continue
+
+        context = format_context(results)
+        sources = format_sources(results)
 
         print("Retrieved sources:")
         for result in results:

@@ -21,7 +21,11 @@ TOP_K = 4
 DENSE_CANDIDATES = 20
 BM25_CANDIDATES = 20
 RRF_K = 60
+RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+RERANK_CANDIDATES = 20
+RERANK_GATE = 0.0
 TOKEN_RE = re.compile(r"0x[0-9a-f]+|[^\W_]+", re.IGNORECASE | re.UNICODE)
+_RERANKER = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +37,7 @@ class RetrievalResult:
     bm25_rank: int | None
     dense_score: float | None
     bm25_score: float | None
+    rerank_score: float | None = None
 
 
 def load_index(index_path: Path = INDEX_PATH) -> list[dict[str, Any]]:
@@ -208,6 +213,71 @@ def hybrid_retrieve(
     dense_results = dense_ranking(query_embedding, records, limit=dense_candidates)
     bm25_results = bm25_ranking(query, bm25_index, limit=bm25_candidates)
     return reciprocal_rank_fusion(dense_results, bm25_results, records, top_k, rrf_k)
+
+
+def get_reranker():
+    """Load the cross-encoder once on CPU."""
+    global _RERANKER
+    if _RERANKER is None:
+        from sentence_transformers import CrossEncoder
+
+        _RERANKER = CrossEncoder(RERANK_MODEL, device="cpu")
+    return _RERANKER
+
+
+def rerank(
+    query: str,
+    candidate_records: list[tuple[int, dict[str, Any]]],
+) -> list[tuple[int, float]]:
+    """Rerank candidate chunks with a CPU cross-encoder."""
+    if not candidate_records:
+        return []
+
+    pairs = [
+        (query, str(record.get("text", "")))
+        for _, record in candidate_records
+    ]
+    scores = get_reranker().predict(pairs)
+    ranked = [
+        (record_index, float(score))
+        for (record_index, _), score in zip(candidate_records, scores)
+    ]
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    return ranked
+
+
+def retrieve_reranked(
+    query: str,
+    query_embedding,
+    query_tokens: list[str],
+    records: list[dict[str, Any]],
+    top_k: int = TOP_K,
+    bm25_index: BM25Okapi | None = None,
+) -> tuple[list[RetrievalResult], float]:
+    candidate_indices = hybrid_rank(
+        query_embedding,
+        query_tokens,
+        records,
+        top_k=RERANK_CANDIDATES,
+        bm25_index=bm25_index,
+    )
+    candidate_records = [(index, records[index]) for index in candidate_indices]
+    ranked = rerank(query, candidate_records)
+    best_score = ranked[0][1] if ranked else float("-inf")
+    results = [
+        RetrievalResult(
+            record_index=index,
+            record=records[index],
+            fused_score=0.0,
+            dense_rank=None,
+            bm25_rank=None,
+            dense_score=None,
+            bm25_score=None,
+            rerank_score=score,
+        )
+        for index, score in ranked[:top_k]
+    ]
+    return results, best_score
 
 
 def source_label(record: dict[str, Any]) -> str:

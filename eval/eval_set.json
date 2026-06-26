@@ -21,6 +21,6 @@
   },
   {
     "query": "What is the seed/key recovery algorithm for Simos18?",
-    "relevant_substrings": ["intentionally excluded", "not covered", "out of scope"]
+    "out_of_scope": true
   }
 ]

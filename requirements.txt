@@ -6,5 +6,5 @@ openai
 pymupdf4llm            # PDF -> Markdown for ECU/UDS docs
 rank-bm25              # lexical retrieval for BM25 + RRF hybrid search
 # sqlite-vec            # local vector store + FTS5 hybrid search
-# sentence-transformers # cross-encoder reranking (Week 3 stretch)
+sentence-transformers  # cross-encoder reranking (Week 3 stretch)
 # ragas                 # RAG evaluation (Week 4 stretch)
