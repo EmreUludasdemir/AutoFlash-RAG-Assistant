@@ -1,0 +1,211 @@
+"""Streamlit UI for the local AutoFlash RAG Assistant."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any
+
+import streamlit as st
+from foundry_local_sdk import Configuration, FoundryLocalManager
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from main import (  # noqa: E402
+    APP_NAME,
+    CHAT_MODEL,
+    EMBEDDING_MODEL,
+    abstention_answer,
+    is_out_of_scope_security_query,
+    is_turkish_query,
+    retrieval_query_for_rerank,
+)
+from retrieval import (  # noqa: E402
+    INDEX_PATH,
+    RERANK_GATE,
+    build_bm25,
+    format_context,
+    format_sources,
+    get_reranker,
+    load_index,
+    retrieve_reranked,
+    source_label,
+    tokenize,
+)
+
+
+def language_instruction(query: str) -> str:
+    if is_turkish_query(query):
+        return "The user's question is in Turkish. Answer in Turkish."
+    return "The user's question is in English. Answer in English."
+
+
+def grounded_messages(query: str, context: str) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                f"{language_instruction(query)} Keep the answer concise: 2-4 sentences. "
+                "Answer the user's question using only the provided context. "
+                "Cite the source(s) you used at the end as `Sources: <source list>`. "
+                "If the context does not contain the answer, say you don't know "
+                "rather than guessing. Do not use outside knowledge. "
+                "When the question names an exact identifier or service such as "
+                "0x19 or RequestDownload, focus only on context about that exact "
+                "identifier or service and ignore unrelated identifiers. Do not "
+                "invent protocols, transports, or examples that are not in context. "
+                "If the user asks in Turkish, answer in Turkish while keeping "
+                "technical terms like UDS, DTC, checksum, RequestDownload, "
+                "TransferData, ECU, and calibration in English when useful.\n\n"
+                f"Context:\n{context}"
+            ),
+        },
+        {"role": "user", "content": query},
+    ]
+
+
+def stream_chat(chat_client: Any, messages: list[dict[str, str]]):
+    for chunk in chat_client.complete_streaming_chat(messages):
+        if not chunk.choices:
+            continue
+        content = chunk.choices[0].delta.content
+        if content:
+            yield content
+
+
+@st.cache_resource(show_spinner="Loading local RAG resources...")
+def load_resources() -> dict[str, Any]:
+    if not INDEX_PATH.exists():
+        raise FileNotFoundError(
+            f"Missing index: {INDEX_PATH.as_posix()}. Run `python src/ingest.py` first."
+        )
+
+    records = load_index()
+    bm25_index = build_bm25(records)
+
+    config = Configuration(app_name=APP_NAME)
+    FoundryLocalManager.initialize(config)
+    manager = FoundryLocalManager.instance
+
+    embedding_model = manager.catalog.get_model(EMBEDDING_MODEL)
+    if embedding_model is None:
+        raise RuntimeError(f"Embedding model not found: {EMBEDDING_MODEL}")
+    embedding_model.download(lambda _p: None)
+    embedding_model.load()
+    embedding_client = embedding_model.get_embedding_client()
+
+    chat_model = manager.catalog.get_model(CHAT_MODEL)
+    if chat_model is None:
+        raise RuntimeError(f"Chat model not found: {CHAT_MODEL}")
+    chat_model.download(lambda _p: None)
+    chat_model.load()
+    chat_client = chat_model.get_chat_client()
+
+    reranker = get_reranker()
+    print(
+        "Streamlit resource init complete: "
+        f"{len(records)} chunks, BM25, Foundry models, CPU CrossEncoder loaded."
+    )
+
+    return {
+        "records": records,
+        "bm25_index": bm25_index,
+        "embedding_client": embedding_client,
+        "chat_client": chat_client,
+        "reranker": reranker,
+    }
+
+
+def retrieve_for_query(query: str, resources: dict[str, Any]):
+    retrieval_query = retrieval_query_for_rerank(query)
+    response = resources["embedding_client"].generate_embedding(retrieval_query)
+    query_embedding = response.data[0].embedding
+    return retrieve_reranked(
+        retrieval_query,
+        query_embedding,
+        tokenize(retrieval_query),
+        resources["records"],
+        bm25_index=resources["bm25_index"],
+    )
+
+
+def show_sources(results, best_score: float, decision: str) -> None:
+    with st.expander("Retrieved sources", expanded=False):
+        st.caption(
+            f"Confidence: best_rerank_score={best_score:.3f} "
+            f"(gate={RERANK_GATE}) -> {decision}"
+        )
+        if not results:
+            st.write("No sources shown because no confident in-scope match was found.")
+            return
+        for result in results:
+            score = result.rerank_score if result.rerank_score is not None else 0.0
+            st.markdown(f"- `{score:.3f}` {source_label(result.record)}")
+
+
+def main() -> None:
+    st.set_page_config(
+        page_title="AutoFlash RAG Assistant",
+        layout="wide",
+    )
+    st.title("AutoFlash RAG Assistant — Local ECU/UDS Knowledge")
+    st.caption(
+        "Runs fully offline on Microsoft Foundry Local. "
+        "Engineering/educational sources only; security-bypass material is excluded."
+    )
+
+    try:
+        resources = load_resources()
+    except Exception as exc:  # pragma: no cover - visible UI startup failure
+        st.error(str(exc))
+        st.stop()
+
+    st.sidebar.metric("Indexed chunks", len(resources["records"]))
+    st.sidebar.caption(f"Confidence gate: {RERANK_GATE}")
+
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    query = st.chat_input("Ask about ECU diagnostics, UDS services, DTCs, or flashing concepts")
+    if not query:
+        return
+
+    st.session_state.messages.append({"role": "user", "content": query})
+    with st.chat_message("user"):
+        st.markdown(query)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Retrieving local context..."):
+            results, best_score = retrieve_for_query(query, resources)
+
+        should_abstain = best_score < RERANK_GATE or is_out_of_scope_security_query(query)
+        decision = "abstained" if should_abstain else "answered"
+
+        if should_abstain:
+            answer = abstention_answer(query)
+            st.markdown(answer)
+            show_sources([], best_score, decision)
+        else:
+            context = format_context(results)
+            sources = format_sources(results)
+            answer = st.write_stream(
+                stream_chat(resources["chat_client"], grounded_messages(query, context))
+            )
+            if "Sources:" not in answer:
+                source_line = f"\n\nSources: {sources}"
+                st.markdown(source_line)
+                answer += source_line
+            show_sources(results, best_score, decision)
+
+    st.session_state.messages.append({"role": "assistant", "content": answer})
+
+
+if __name__ == "__main__":
+    main()

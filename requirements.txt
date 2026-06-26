@@ -5,6 +5,7 @@ openai
 # Week 2+ (uncomment when needed)
 pymupdf4llm            # PDF -> Markdown for ECU/UDS docs
 rank-bm25              # lexical retrieval for BM25 + RRF hybrid search
+streamlit              # local web UI
 # sqlite-vec            # local vector store + FTS5 hybrid search
 sentence-transformers  # cross-encoder reranking (Week 3 stretch)
 # ragas                 # RAG evaluation (Week 4 stretch)
