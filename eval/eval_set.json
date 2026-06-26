@@ -1,0 +1,26 @@
+[
+  {
+    "query": "What does UDS service 0x19 do?",
+    "relevant_substrings": ["readdtcinformation", "0x19", "dtc"]
+  },
+  {
+    "query": "What is the role of a checksum when flashing an ECU calibration block?",
+    "relevant_substrings": ["checksum", "crc", "integrity"]
+  },
+  {
+    "query": "What is RequestDownload used for in UDS?",
+    "relevant_substrings": ["requestdownload", "transferdata", "download"]
+  },
+  {
+    "query": "What is service 0x22 used for?",
+    "relevant_substrings": ["readdatabyidentifier", "0x22", "did"]
+  },
+  {
+    "query": "How are DTCs structured (P, C, B, U)?",
+    "relevant_substrings": ["powertrain", "chassis", "dtc"]
+  },
+  {
+    "query": "What is the seed/key recovery algorithm for Simos18?",
+    "relevant_substrings": ["intentionally excluded", "not covered", "out of scope"]
+  }
+]

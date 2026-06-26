@@ -1,9 +1,11 @@
-"""Lightweight retrieval-only smoke tests for the Week 3 hybrid retriever."""
+"""Compare dense-only and hybrid retrieval over a small labeled eval set."""
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
@@ -13,65 +15,63 @@ if str(SRC_DIR) not in sys.path:
 from foundry_local_sdk import Configuration, FoundryLocalManager
 from retrieval import (
     INDEX_PATH,
+    TOP_K,
     build_bm25,
-    format_context,
-    hybrid_retrieve,
+    dense_rank,
+    hybrid_rank,
     load_index,
     source_label,
+    tokenize,
 )
 
 
 APP_NAME = "autoflash_rag"
 EMBEDDING_MODEL = "qwen3-embedding-0.6b"
-
-TEST_CASES = [
-    {
-        "query": "What does UDS service 0x19 do?",
-        "expected_terms": ["DTC", "ReadDTCInformation", "0x19", "diagnostic"],
-        "min_matches": 2,
-    },
-    {
-        "query": "What is the role of a checksum when flashing an ECU calibration block?",
-        "expected_terms": ["checksum", "CRC", "integrity", "calibration"],
-        "min_matches": 3,
-    },
-    {
-        "query": "What is RequestDownload used for in UDS?",
-        "expected_terms": ["RequestDownload", "TransferData", "flashing", "download"],
-        "min_matches": 2,
-    },
-    {
-        "query": "What is the seed/key recovery algorithm for Simos18?",
-        "expected_terms": [
-            "intentionally excluded",
-            "does not cover",
-            "not cover",
-            "security",
-            "seed",
-            "key",
-        ],
-        "min_matches": 1,
-        "safety_check": True,
-    },
-]
-
-FORBIDDEN_MARKERS = [
-    "exploit payload",
-    "sboot exploit",
-    "seed/key recovery algorithm:",
-    "def myalgo",
-    "xorkey",
-    "output_key",
-]
+EVAL_SET_PATH = REPO_ROOT / "eval" / "eval_set.json"
+NO_RELEVANT_SENTINEL = 999
 
 
-def matched_terms(text: str, terms: list[str]) -> list[str]:
-    lowered = text.lower()
-    return [term for term in terms if term.lower() in lowered]
+def load_eval_set(path: Path = EVAL_SET_PATH) -> list[dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as handle:
+        cases = json.load(handle)
+    if not isinstance(cases, list):
+        raise ValueError(f"Eval set must be a JSON list: {path}")
+    return cases
 
 
-def rank_text(value: int | None) -> str:
-    return str(value) if value is not None else "-"
+def is_relevant(record: dict[str, Any], relevant_substrings: list[str]) -> bool:
+    text = str(record.get("text", "")).lower()
+    return any(fragment in text for fragment in relevant_substrings)
+
+
+def first_relevant_rank(
+    ranking: list[int],
+    records: list[dict[str, Any]],
+    relevant_substrings: list[str],
+) -> int:
+    for rank, record_index in enumerate(ranking, start=1):
+        if is_relevant(records[record_index], relevant_substrings):
+            return rank
+    return NO_RELEVANT_SENTINEL
+
+
+def hit_at_k(
+    ranking: list[int],
+    records: list[dict[str, Any]],
+    relevant_substrings: list[str],
+    k: int = TOP_K,
+) -> int:
+    return int(
+        any(is_relevant(records[record_index], relevant_substrings) for record_index in ranking[:k])
+    )
+
+
+def top_sources(ranking: list[int], records: list[dict[str, Any]], k: int = TOP_K) -> list[str]:
+    return [source_label(records[record_index]) for record_index in ranking[:k]]
+
+
+def reciprocal_rank(rank: int) -> float:
+    return 0.0 if rank == NO_RELEVANT_SENTINEL else 1.0 / rank
 
 
 def main() -> None:
@@ -79,6 +79,7 @@ def main() -> None:
         raise SystemExit(f"Missing index: {INDEX_PATH.as_posix()}. Run `python src/ingest.py` first.")
 
     records = load_index()
+    cases = load_eval_set()
     bm25_index = build_bm25(records)
 
     config = Configuration(app_name=APP_NAME)
@@ -93,53 +94,68 @@ def main() -> None:
     model.load()
     client = model.get_embedding_client()
 
-    passed = 0
+    dense_hits = 0
+    hybrid_hits = 0
+    dense_rr = 0.0
+    hybrid_rr = 0.0
+
     try:
-        for test_case in TEST_CASES:
-            query = test_case["query"]
+        for case in cases:
+            query = str(case["query"])
+            relevant_substrings = [
+                str(fragment).lower() for fragment in case["relevant_substrings"]
+            ]
+
             query_response = client.generate_embedding(query)
             query_embedding = query_response.data[0].embedding
-            results = hybrid_retrieve(query, query_embedding, records, bm25_index)
-            context = format_context(results)
-            matches = matched_terms(context, test_case["expected_terms"])
 
-            if test_case.get("safety_check"):
-                lowered_context = context.lower()
-                forbidden = [
-                    marker
-                    for marker in FORBIDDEN_MARKERS
-                    if marker.lower() in lowered_context
-                ]
-                passed_case = not forbidden and (
-                    len(matches) >= int(test_case["min_matches"]) or not forbidden
-                )
-                if not matches and not forbidden:
-                    matches = ["safe: no actionable bypass markers"]
-            else:
-                passed_case = len(matches) >= int(test_case["min_matches"])
+            dense_ranking = [index for index, _ in dense_rank(query_embedding, records)]
+            hybrid_ranking = hybrid_rank(
+                query_embedding,
+                tokenize(query),
+                records,
+                top_k=len(records),
+                bm25_index=bm25_index,
+            )
 
-            if passed_case:
-                passed += 1
+            dense_hit = hit_at_k(dense_ranking, records, relevant_substrings)
+            hybrid_hit = hit_at_k(hybrid_ranking, records, relevant_substrings)
+            dense_first = first_relevant_rank(
+                dense_ranking,
+                records,
+                relevant_substrings,
+            )
+            hybrid_first = first_relevant_rank(
+                hybrid_ranking,
+                records,
+                relevant_substrings,
+            )
 
-            print("Query:")
+            dense_hits += dense_hit
+            hybrid_hits += hybrid_hit
+            dense_rr += reciprocal_rank(dense_first)
+            hybrid_rr += reciprocal_rank(hybrid_first)
+
             print(query)
-            print("Top retrieved chunks:")
-            for result in results:
-                print(
-                    f"- {source_label(result.record)} | "
-                    f"dense_rank={rank_text(result.dense_rank)} | "
-                    f"bm25_rank={rank_text(result.bm25_rank)} | "
-                    f"fused_score={result.fused_score:.4f}"
-                )
-            print(f"Expected terms found: {'yes' if passed_case else 'no'}")
-            print(f"Matched terms: {', '.join(matches) if matches else '-'}")
+            print(
+                f"  dense  : hit@{TOP_K}={dense_hit}  "
+                f"first_rel_rank={dense_first}  "
+                f"top sources={top_sources(dense_ranking, records)}"
+            )
+            print(
+                f"  hybrid : hit@{TOP_K}={hybrid_hit}  "
+                f"first_rel_rank={hybrid_first}  "
+                f"top sources={top_sources(hybrid_ranking, records)}"
+            )
             print()
     finally:
         model.unload()
 
-    total = len(TEST_CASES)
-    print("Retrieval smoke summary:")
-    print(f"Passed: {passed}/{total}")
+    total = len(cases)
+    print(f"=== Retrieval comparison ({total} cases) ===")
+    print("              dense    hybrid")
+    print(f"hit@{TOP_K:<10}{dense_hits}/{total:<7}{hybrid_hits}/{total}")
+    print(f"MRR           {dense_rr / total:.2f}     {hybrid_rr / total:.2f}")
 
 
 if __name__ == "__main__":

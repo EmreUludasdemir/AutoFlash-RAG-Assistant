@@ -26,6 +26,7 @@ TOKEN_RE = re.compile(r"0x[0-9a-f]+|[^\W_]+", re.IGNORECASE | re.UNICODE)
 
 @dataclass(frozen=True)
 class RetrievalResult:
+    record_index: int
     record: dict[str, Any]
     fused_score: float
     dense_rank: int | None
@@ -61,10 +62,10 @@ def cosine_similarity(a, b) -> float:
     return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
 
-def dense_ranking(
+def dense_rank(
     query_embedding,
     records: list[dict[str, Any]],
-    limit: int = DENSE_CANDIDATES,
+    limit: int | None = None,
 ) -> list[tuple[int, float]]:
     scored = []
     for index, record in enumerate(records):
@@ -72,7 +73,28 @@ def dense_ranking(
         if embedding:
             scored.append((index, cosine_similarity(query_embedding, embedding)))
     scored.sort(key=lambda item: item[1], reverse=True)
-    return scored[:limit]
+    return scored[:limit] if limit is not None else scored
+
+
+def dense_ranking(
+    query_embedding,
+    records: list[dict[str, Any]],
+    limit: int = DENSE_CANDIDATES,
+) -> list[tuple[int, float]]:
+    return dense_rank(query_embedding, records, limit=limit)
+
+
+def bm25_rank(
+    query_tokens: list[str],
+    records: list[dict[str, Any]],
+    bm25_index: BM25Okapi | None = None,
+    limit: int | None = None,
+) -> list[tuple[int, float]]:
+    index = bm25_index if bm25_index is not None else build_bm25(records)
+    scores = index.get_scores(query_tokens)
+    ranked = [(index, float(score)) for index, score in enumerate(scores)]
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    return ranked[:limit] if limit is not None else ranked
 
 
 def bm25_ranking(
@@ -80,10 +102,7 @@ def bm25_ranking(
     bm25_index: BM25Okapi,
     limit: int = BM25_CANDIDATES,
 ) -> list[tuple[int, float]]:
-    scores = bm25_index.get_scores(tokenize(query))
-    ranked = [(index, float(score)) for index, score in enumerate(scores)]
-    ranked.sort(key=lambda item: item[1], reverse=True)
-    return ranked[:limit]
+    return bm25_rank(tokenize(query), [], bm25_index=bm25_index, limit=limit)
 
 
 def reciprocal_rank_fusion(
@@ -137,6 +156,7 @@ def reciprocal_rank_fusion(
 
     return [
         RetrievalResult(
+            record_index=index,
             record=records[index],
             fused_score=float(item["fused_score"]),
             dense_rank=item["dense_rank"] if isinstance(item["dense_rank"], int) else None,
@@ -148,6 +168,31 @@ def reciprocal_rank_fusion(
         )
         for index, item in ranked[:top_k]
     ]
+
+
+def hybrid_rank(
+    query_embedding,
+    query_tokens: list[str],
+    records: list[dict[str, Any]],
+    top_k: int = TOP_K,
+    bm25_index: BM25Okapi | None = None,
+) -> list[int]:
+    index = bm25_index if bm25_index is not None else build_bm25(records)
+    dense_results = dense_rank(query_embedding, records, limit=DENSE_CANDIDATES)
+    bm25_results = bm25_rank(
+        query_tokens,
+        records,
+        bm25_index=index,
+        limit=BM25_CANDIDATES,
+    )
+    results = reciprocal_rank_fusion(
+        dense_results,
+        bm25_results,
+        records,
+        top_k=top_k,
+        rrf_k=RRF_K,
+    )
+    return [result.record_index for result in results]
 
 
 def hybrid_retrieve(
