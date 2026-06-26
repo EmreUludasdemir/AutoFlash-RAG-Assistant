@@ -17,7 +17,7 @@ from rank_bm25 import BM25Okapi
 
 
 INDEX_PATH = Path("data/index.json")
-TOP_K = 4
+TOP_K = 6
 DENSE_CANDIDATES = 20
 BM25_CANDIDATES = 20
 RRF_K = 60

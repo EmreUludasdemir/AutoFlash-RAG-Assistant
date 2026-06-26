@@ -24,7 +24,7 @@ from retrieval import (
 # --- Configuration ---------------------------------------------------------
 APP_NAME = "autoflash_rag"
 EMBEDDING_MODEL = "qwen3-embedding-0.6b"
-CHAT_MODEL = "qwen2.5-0.5b"
+CHAT_MODEL = "phi-4-mini"
 
 
 def is_out_of_scope_security_query(query: str) -> bool:
@@ -292,11 +292,14 @@ def main():
             {
                 "role": "system",
                 "content": (
-                    f"{language_instruction} Keep the answer concise: 2-4 sentences. "
-                    "Answer the user's question using only the provided context. "
-                    "Cite the source(s) you used at the end as `Sources: <source list>`. "
-                    "If the context does not contain the answer, say you don't know "
-                    "rather than guessing. Do not use outside knowledge. "
+                    f"{language_instruction} Give a thorough, well-structured, "
+                    "technically precise answer grounded only in the provided "
+                    "context. Explain the relevant service flow, roles, constraints, "
+                    "and terminology when the context supports it. Cite the source "
+                    "file(s) you used at the end as `Sources: <source list>`. "
+                    "If the context does not contain the answer, say that the "
+                    "provided context does not contain the information rather than "
+                    "using outside knowledge. "
                     "When the question names an exact identifier or service such as "
                     "0x19 or RequestDownload, focus only on context about that exact "
                     "identifier or service and ignore unrelated identifiers. Do not "

@@ -48,11 +48,13 @@ def grounded_messages(query: str, context: str) -> list[dict[str, str]]:
         {
             "role": "system",
             "content": (
-                f"{language_instruction(query)} Keep the answer concise: 2-4 sentences. "
-                "Answer the user's question using only the provided context. "
-                "Cite the source(s) you used at the end as `Sources: <source list>`. "
-                "If the context does not contain the answer, say you don't know "
-                "rather than guessing. Do not use outside knowledge. "
+                f"{language_instruction(query)} Give a thorough, well-structured, "
+                "technically precise answer grounded only in the provided context. "
+                "Explain the relevant service flow, roles, constraints, and "
+                "terminology when the context supports it. Cite the source file(s) "
+                "you used at the end as `Sources: <source list>`. If the context "
+                "does not contain the answer, say that the provided context does "
+                "not contain the information rather than using outside knowledge. "
                 "When the question names an exact identifier or service such as "
                 "0x19 or RequestDownload, focus only on context about that exact "
                 "identifier or service and ignore unrelated identifiers. Do not "
