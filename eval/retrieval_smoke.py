@@ -12,7 +12,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from foundry_local_sdk import Configuration, FoundryLocalManager
+from foundry_setup import initialize_manager, load_model_with_webgpu_fallback
 from retrieval import (
     INDEX_PATH,
     RERANK_CANDIDATES,
@@ -109,16 +109,17 @@ def main() -> None:
     cases = load_eval_set()
     bm25_index = build_bm25(records)
 
-    config = Configuration(app_name=APP_NAME)
-    FoundryLocalManager.initialize(config)
-    manager = FoundryLocalManager.instance
-    model = manager.catalog.get_model(EMBEDDING_MODEL)
-    if model is None:
-        raise RuntimeError(f"Embedding model not found: {EMBEDDING_MODEL}")
-
-    model.download(lambda p: print(f"\rDownloading embedding model: {p:.1f}%", end="", flush=True))
+    manager = initialize_manager(APP_NAME)
+    model, model_status = load_model_with_webgpu_fallback(
+        manager,
+        EMBEDDING_MODEL,
+        lambda p: print(f"\rDownloading embedding model: {p:.1f}%", end="", flush=True),
+    )
     print()
-    model.load()
+    print(
+        f"Embedding model loaded: {model_status.model_id} "
+        f"({model_status.device}/{model_status.execution_provider})"
+    )
     client = model.get_embedding_client()
 
     metrics = {

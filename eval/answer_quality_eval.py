@@ -12,7 +12,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from foundry_local_sdk import Configuration, FoundryLocalManager
+from foundry_setup import initialize_manager, load_model_with_webgpu_fallback
 from main import (  # noqa: E402
     APP_NAME,
     CHAT_MODEL,
@@ -271,27 +271,33 @@ def main() -> None:
     records = load_index()
     bm25_index = build_bm25(records)
 
-    config = Configuration(app_name=APP_NAME)
-    FoundryLocalManager.initialize(config)
-    manager = FoundryLocalManager.instance
+    manager = initialize_manager(APP_NAME)
 
     embedding_model = None
     chat_model = None
     rows: list[dict[str, Any]] = []
 
     try:
-        embedding_model = manager.catalog.get_model(EMBEDDING_MODEL)
-        if embedding_model is None:
-            raise RuntimeError(f"Embedding model not found: {EMBEDDING_MODEL}")
-        embedding_model.download(lambda _p: None)
-        embedding_model.load()
+        embedding_model, embedding_status = load_model_with_webgpu_fallback(
+            manager,
+            EMBEDDING_MODEL,
+            lambda _p: None,
+        )
+        print(
+            f"Embedding model loaded: {embedding_status.model_id} "
+            f"({embedding_status.device}/{embedding_status.execution_provider})"
+        )
         embedding_client = embedding_model.get_embedding_client()
 
-        chat_model = manager.catalog.get_model(CHAT_MODEL)
-        if chat_model is None:
-            raise RuntimeError(f"Chat model not found: {CHAT_MODEL}")
-        chat_model.download(lambda _p: None)
-        chat_model.load()
+        chat_model, chat_status = load_model_with_webgpu_fallback(
+            manager,
+            CHAT_MODEL,
+            lambda _p: None,
+        )
+        print(
+            f"Chat model loaded: {chat_status.model_id} "
+            f"({chat_status.device}/{chat_status.execution_provider})"
+        )
         chat_client = chat_model.get_chat_client()
 
         for case in cases:

@@ -7,7 +7,7 @@ chat model to answer with citations.
 
 from __future__ import annotations
 
-from foundry_local_sdk import Configuration, FoundryLocalManager
+from foundry_setup import initialize_manager, load_model_with_webgpu_fallback
 from retrieval import (
     INDEX_PATH,
     RERANK_GATE,
@@ -185,27 +185,35 @@ def main():
     print(f"Loaded {len(records)} indexed chunks from {INDEX_PATH.as_posix()}.")
     print("Built BM25 index.")
 
-    # Initialize the SDK
-    config = Configuration(app_name=APP_NAME)
-    FoundryLocalManager.initialize(config)
-    manager = FoundryLocalManager.instance
+    # Initialize the SDK and register GPU EPs when available.
+    manager = initialize_manager(APP_NAME)
 
     # Load embedding model for query embeddings only
-    embedding_model = manager.catalog.get_model(EMBEDDING_MODEL)
-    embedding_model.download(
-        lambda p: print(f"\rDownloading embedding model: {p:.1f}%", end="", flush=True)
+    embedding_model, embedding_status = load_model_with_webgpu_fallback(
+        manager,
+        EMBEDDING_MODEL,
+        lambda p: print(f"\rDownloading embedding model: {p:.1f}%", end="", flush=True),
     )
     print()
-    embedding_model.load()
+    print(
+        f"Embedding model loaded: {embedding_status.model_id} "
+        f"({embedding_status.device}/{embedding_status.execution_provider})"
+    )
     embedding_client = embedding_model.get_embedding_client()
 
     # Load chat model
-    chat_model = manager.catalog.get_model(CHAT_MODEL)
-    chat_model.download(
-        lambda p: print(f"\rDownloading chat model: {p:.1f}%", end="", flush=True)
+    chat_model, chat_status = load_model_with_webgpu_fallback(
+        manager,
+        CHAT_MODEL,
+        lambda p: print(f"\rDownloading chat model: {p:.1f}%", end="", flush=True),
     )
     print()
-    chat_model.load()
+    print(
+        f"Chat model loaded: {chat_status.model_id} "
+        f"({chat_status.device}/{chat_status.execution_provider})"
+    )
+    if chat_status.used_fallback and chat_status.errors:
+        print("GPU load failed; using CPU fallback.")
     chat_client = chat_model.get_chat_client()
 
     print("\nModels loaded. Ready for questions. Type 'quit' to exit.\n")
