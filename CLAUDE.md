@@ -23,14 +23,28 @@ Out-of-scope queries **must abstain**, never fabricate.
   the CUDA EP does not ship Blackwell `sm_120` kernels yet). Foundry CLI ~0.8.x.
 - Hardware: RTX 5060 Laptop (Blackwell, 8 GB VRAM) + AMD NPU + CPU.
 - Models are loaded **by alias** via `manager.catalog.get_model("<alias>")`,
-  then `.download()` → `.load()` → `.get_embedding_client()` /
+  then `.download()` -> `.load()` -> `.get_embedding_client()` /
   `.get_chat_client()`.
-  - Embedding: `qwen3-embedding-0.6b` (**keep on alias — do not change**).
-  - Chat: alias `phi-4-mini`. Foundry EP preference is **NPU > GPU > CPU**, so
-    the alias auto-selects the AMD VitisAI **NPU** variant → slow (~53 s/answer).
-- Known SDK quirk: `manager.catalog.get_model_variant(...)` returned `None` when
-  given a colon-version id (`...:N`); the id format matters. Prefer the cached
-  variant object directly, or try the id without the `:N` suffix.
+  - Embedding: `qwen3-embedding-0.6b` (**keep on alias; do not change**).
+  - Chat: alias `phi-4-mini`.
+- Important SDK behavior: `foundry-local-sdk-winml` runs its own embedded core,
+  separate from the `foundry` CLI service. The SDK catalog exposes model
+  variants only for execution providers registered in the current Python
+  process. With no registered GPU EPs it silently showed/loaded only
+  `generic-cpu` variants, so the historical ~53 s answers were CPU inference,
+  not NPU inference.
+- `get_model_variant(...)` returning `None` for GPU ids was caused by the SDK
+  catalog not exposing GPU variants before EP registration, not by a colon-id
+  format issue.
+- The app now calls [src/foundry_setup.py](src/foundry_setup.py) on startup:
+  it registers EPs (the single-name WebGPU registration path currently returns
+  an empty-name error, so it uses the all-EP workaround), prefers
+  `WebGpuExecutionProvider` variants, and falls back to CPU if GPU load fails.
+  On this machine WebGPU registration succeeds and `generic-gpu` variants are
+  visible/cached, but loading `Phi-4-mini-instruct-generic-gpu:5` currently
+  fails in the SDK runtime (`WebGPU execution provider is not supported in this
+  build` / CUDA GenAI DLL path when CUDA is also registered), so CPU fallback is
+  the stable working path.
 
 ## Architecture (read the code at these paths)
 
