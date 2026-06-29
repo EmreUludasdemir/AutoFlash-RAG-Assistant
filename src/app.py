@@ -43,30 +43,42 @@ def language_instruction(query: str) -> str:
     return "The user's question is in English. Answer in English."
 
 
-def grounded_messages(query: str, context: str) -> list[dict[str, str]]:
-    return [
-        {
-            "role": "system",
-            "content": (
-                f"{language_instruction(query)} Give a thorough, well-structured, "
-                "technically precise answer grounded only in the provided context. "
-                "Explain the relevant service flow, roles, constraints, and "
-                "terminology when the context supports it. Cite the source file(s) "
-                "you used at the end as `Sources: <source list>`. If the context "
-                "does not contain the answer, say that the provided context does "
-                "not contain the information rather than using outside knowledge. "
-                "When the question names an exact identifier or service such as "
-                "0x19 or RequestDownload, focus only on context about that exact "
-                "identifier or service and ignore unrelated identifiers. Do not "
-                "invent protocols, transports, or examples that are not in context. "
-                "If the user asks in Turkish, answer in Turkish while keeping "
-                "technical terms like UDS, DTC, checksum, RequestDownload, "
-                "TransferData, ECU, and calibration in English when useful.\n\n"
-                f"Context:\n{context}"
-            ),
-        },
-        {"role": "user", "content": query},
-    ]
+HISTORY_TURNS = 3
+
+
+def recent_history(messages: list[dict[str, str]], turns: int = HISTORY_TURNS) -> list[dict[str, str]]:
+    """Return the last `turns` user/assistant exchanges, oldest first."""
+    return messages[-(turns * 2):] if messages else []
+
+
+def grounded_messages(
+    query: str,
+    context: str,
+    history: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    system = {
+        "role": "system",
+        "content": (
+            f"{language_instruction(query)} Give a thorough, well-structured, "
+            "technically precise answer grounded only in the provided context. "
+            "Explain the relevant service flow, roles, constraints, and "
+            "terminology when the context supports it. Cite the source file(s) "
+            "you used at the end as `Sources: <source list>`. If the context "
+            "does not contain the answer, say that the provided context does "
+            "not contain the information rather than using outside knowledge. "
+            "When the question names an exact identifier or service such as "
+            "0x19 or RequestDownload, focus only on context about that exact "
+            "identifier or service and ignore unrelated identifiers. Do not "
+            "invent protocols, transports, or examples that are not in context. "
+            "If the user asks in Turkish, answer in Turkish while keeping "
+            "technical terms like UDS, DTC, checksum, RequestDownload, "
+            "TransferData, ECU, and calibration in English when useful. Use the "
+            "prior conversation turns only for continuity (e.g. follow-up "
+            "references); ground the actual answer in the context below.\n\n"
+            f"Context:\n{context}"
+        ),
+    }
+    return [system, *(history or []), {"role": "user", "content": query}]
 
 
 def stream_chat(chat_client: Any, messages: list[dict[str, str]]):
@@ -171,6 +183,9 @@ def main() -> None:
         f"Chat: {resources['chat_status'].model_id} "
         f"({resources['chat_status'].execution_provider})"
     )
+    if st.sidebar.button("Clear conversation"):
+        st.session_state.messages = []
+        st.rerun()
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -183,6 +198,7 @@ def main() -> None:
     if not query:
         return
 
+    history = recent_history(st.session_state.messages)
     st.session_state.messages.append({"role": "user", "content": query})
     with st.chat_message("user"):
         st.markdown(query)
@@ -202,7 +218,10 @@ def main() -> None:
             context = format_context(results)
             sources = format_sources(results)
             answer = st.write_stream(
-                stream_chat(resources["chat_client"], grounded_messages(query, context))
+                stream_chat(
+                    resources["chat_client"],
+                    grounded_messages(query, context, history),
+                )
             )
             if "Sources:" not in answer:
                 source_line = f"\n\nSources: {sources}"
