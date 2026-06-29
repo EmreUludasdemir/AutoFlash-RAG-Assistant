@@ -1,7 +1,23 @@
-"""Foundry Local SDK startup helpers with WebGPU registration and CPU fallback."""
+"""Foundry Local SDK startup helpers — CPU-first, with an opt-in WebGPU path.
+
+GPU status on this build (foundry-local-sdk-winml 1.2.3 / onnxruntime-genai
+0.14.1): GPU inference is NOT available.
+  * CUDA: the GenAI CUDA companion (onnxruntime-genai-cuda.dll) fails to load and
+    has no Blackwell sm_120 kernels.
+  * WebGPU: the shipped onnxruntime-genai.dll raises
+    "WebGPU execution provider is not supported in this build."
+So models are loaded on CPU. Registering GPU execution providers is therefore
+both useless (no working GPU GenAI runtime) and harmful (it makes the SDK
+catalog expose GPU variants and sort one first, so an unguarded
+``get_model(alias).load()`` would pick a GPU variant and crash). We keep the
+WebGPU machinery behind the opt-in ``AUTOFLASH_TRY_WEBGPU`` env var so it will
+"just work" if a future SDK build adds WebGPU GenAI support, but by default we
+register nothing and select the CPU variant explicitly.
+"""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -10,6 +26,7 @@ from foundry_local_sdk import Configuration, FoundryLocalManager
 
 WEBGPU_EP = "WebGpuExecutionProvider"
 CPU_EP = "CPUExecutionProvider"
+TRY_WEBGPU_ENV = "AUTOFLASH_TRY_WEBGPU"
 _EP_STATUS: "EpSetupStatus | None" = None
 
 
@@ -33,21 +50,28 @@ class ModelLoadStatus:
     errors: list[str] = field(default_factory=list)
 
 
+def webgpu_opt_in() -> bool:
+    """True only if the user opted into the (currently non-functional) WebGPU path."""
+    return os.environ.get(TRY_WEBGPU_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def initialize_manager(app_name: str) -> FoundryLocalManager:
-    """Initialize Foundry Local and register GPU EPs when possible."""
+    """Initialize Foundry Local. GPU EPs are registered only when opted in."""
     FoundryLocalManager.initialize(Configuration(app_name=app_name))
     manager = FoundryLocalManager.instance
-    ensure_webgpu_registered(manager)
+    if webgpu_opt_in():
+        ensure_webgpu_registered(manager)
     return manager
 
 
 def ensure_webgpu_registered(manager: FoundryLocalManager) -> EpSetupStatus:
     """Register WebGPU for this SDK process; fall back cleanly on failure.
 
-    The WinML SDK exposes GPU model variants only for EPs registered in the
-    current process. The SDK's single-name registration currently fails on this
-    machine, so the robust path is to register all discoverable EPs and then
-    check whether WebGPU is available.
+    Only called when ``AUTOFLASH_TRY_WEBGPU`` is set. The WinML SDK exposes GPU
+    model variants only for EPs registered in the current profile. The SDK's
+    single-name registration is broken (the core reports "Unknown EP
+    bootstrapper name(s)"), so the only working path is to register all
+    discoverable EPs and then check whether WebGPU is available.
     """
     global _EP_STATUS
     if _EP_STATUS is not None:
@@ -106,9 +130,19 @@ def load_model_with_webgpu_fallback(
     manager: FoundryLocalManager,
     alias: str,
     progress_callback: Callable[[float], None] | None = None,
-    prefer_webgpu: bool = True,
+    prefer_webgpu: bool | None = None,
 ) -> tuple[Any, ModelLoadStatus]:
-    """Load a model by alias, preferring WebGPU but falling back to CPU."""
+    """Load a model by alias on CPU (the working path), or WebGPU when opted in.
+
+    With WebGPU opted in (``AUTOFLASH_TRY_WEBGPU``), the WebGPU variant is tried
+    first and falls back to CPU on failure. By default WebGPU is skipped and the
+    CPU variant is selected explicitly — required because, once GPU EPs are
+    registered, the catalog sorts a GPU variant first and the default selection
+    would otherwise be an unloadable GPU variant.
+    """
+    if prefer_webgpu is None:
+        prefer_webgpu = webgpu_opt_in()
+
     model = manager.catalog.get_model(alias)
     if model is None:
         raise RuntimeError(f"Model not found: {alias}")
@@ -127,12 +161,10 @@ def load_model_with_webgpu_fallback(
             except Exception:
                 pass
 
-    if not select_variant_by_ep(model, CPU_EP):
-        raise RuntimeError(
-            f"No CPU fallback variant found for {alias}. GPU errors: {'; '.join(errors)}"
-        )
-
+    # CPU path (default). Select CPU explicitly; only fall back to the catalog
+    # default if no CPU variant is exposed (e.g. EPs not registered at all).
+    select_variant_by_ep(model, CPU_EP)
     _download(model, progress_callback)
     model.load()
     device, ep = runtime_info(model)
-    return model, ModelLoadStatus(alias, model.id, device, ep, True, errors)
+    return model, ModelLoadStatus(alias, model.id, device, ep, bool(errors), errors)

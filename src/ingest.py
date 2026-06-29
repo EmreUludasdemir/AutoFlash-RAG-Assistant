@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 import pymupdf4llm
-from foundry_local_sdk import Configuration, FoundryLocalManager
+from foundry_setup import initialize_manager, load_model_with_webgpu_fallback
 
 
 APP_NAME = "autoflash_rag"
@@ -173,17 +173,18 @@ def embed_records(records: list[dict[str, object]]) -> float | None:
     if not records:
         return None
 
-    config = Configuration(app_name=APP_NAME)
-    FoundryLocalManager.initialize(config)
-    manager = FoundryLocalManager.instance
-
-    model = manager.catalog.get_model(EMBEDDING_MODEL)
-    if model is None:
-        raise RuntimeError(f"Embedding model not found: {EMBEDDING_MODEL}")
-
-    model.download(lambda p: print(f"\rDownloading embedding model: {p:.1f}%", end="", flush=True))
+    # Load on CPU (prefer_webgpu=False): GPU GenAI is unavailable in this SDK
+    # build, and once GPU EPs are registered the catalog default would otherwise
+    # be an unloadable GPU variant. Index embeddings must stay on the same CPU
+    # variant the query path uses so cosine similarities remain comparable.
+    manager = initialize_manager(APP_NAME)
+    model, _status = load_model_with_webgpu_fallback(
+        manager,
+        EMBEDDING_MODEL,
+        lambda p: print(f"\rDownloading embedding model: {p:.1f}%", end="", flush=True),
+        prefer_webgpu=False,
+    )
     print()
-    model.load()
     client = model.get_embedding_client()
 
     first_batch_latency_ms: float | None = None

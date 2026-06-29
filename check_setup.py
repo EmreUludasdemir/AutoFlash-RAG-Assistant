@@ -1,23 +1,32 @@
-"""Week 1 smoke test: verifies the Foundry Local SDK works end-to-end and
-gives a rough GPU-vs-CPU signal via embedding latency.
+"""Week 1 smoke test: verifies the Foundry Local SDK works end-to-end.
 
 Run after `pip install -r requirements.txt` and `winget install Microsoft.FoundryLocal`.
+
+Note: this build runs on CPU (GPU GenAI is unavailable — see src/foundry_setup.py),
+so the embedding latency below reflects CPU inference.
 """
+import sys
 import time
-from foundry_local_sdk import Configuration, FoundryLocalManager
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from foundry_setup import initialize_manager, load_model_with_webgpu_fallback  # noqa: E402
 
 
 def main():
-    config = Configuration(app_name="autoflash_rag")
-    FoundryLocalManager.initialize(config)
-    manager = FoundryLocalManager.instance
+    manager = initialize_manager("autoflash_rag")
     print("SDK initialized OK.")
 
-    model = manager.catalog.get_model("qwen3-embedding-0.6b")
     print("Downloading embedding model if needed...")
-    model.download(lambda p: print(f"\r{p:.1f}%", end="", flush=True))
+    model, status = load_model_with_webgpu_fallback(
+        manager,
+        "qwen3-embedding-0.6b",
+        lambda p: print(f"\r{p:.1f}%", end="", flush=True),
+        prefer_webgpu=False,
+    )
     print()
-    model.load()
+    print(f"Model loaded: {status.model_id} ({status.device}/{status.execution_provider})")
     client = model.get_embedding_client()
 
     t0 = time.time()
@@ -25,8 +34,6 @@ def main():
     dt = (time.time() - t0) * 1000
     dim = len(resp.data[0].embedding)
     print(f"Embedding OK. dim={dim}, latency={dt:.0f} ms")
-    print("Note: <~150 ms usually means GPU is engaged; much slower likely CPU.")
-    print("Authoritative check: run `foundry model list` and look at variants.")
 
     model.unload()
     print("Done.")
