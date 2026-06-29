@@ -90,6 +90,56 @@ def stream_chat(chat_client: Any, messages: list[dict[str, str]]):
             yield content
 
 
+def history_transcript(history: list[dict[str, str]]) -> str:
+    lines = []
+    for message in history:
+        speaker = "User" if message["role"] == "user" else "Assistant"
+        lines.append(f"{speaker}: {message['content']}")
+    return "\n".join(lines)
+
+
+def rewrite_query_with_history(chat_client: Any, query: str, history: list[dict[str, str]]) -> str:
+    """Resolve an elliptical follow-up into a standalone search query.
+
+    Retrieval has no memory of prior turns, so "What does it return exactly?"
+    finds nothing on its own. Ask the chat model to fold in the conversation
+    history before we embed/search; on any failure or empty output, fall back
+    to the raw query so retrieval still runs.
+    """
+    if not history:
+        return query
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Rewrite the user's latest message into a short, standalone "
+                "search query for a document retrieval system. Resolve any "
+                "pronouns or references (e.g. 'it', 'that service') using the "
+                "conversation history below. Output ONLY the rewritten query "
+                "text on a single line: no quotes, no explanation, no prefix. "
+                "Prefer English technical terms even if the conversation is in "
+                "Turkish.\n\n"
+                f"Conversation history:\n{history_transcript(history)}"
+            ),
+        },
+        {"role": "user", "content": query},
+    ]
+    try:
+        parts = []
+        for chunk in chat_client.complete_streaming_chat(messages):
+            if not chunk.choices:
+                continue
+            content = chunk.choices[0].delta.content
+            if content:
+                parts.append(content)
+        raw = "".join(parts).strip()
+        rewritten = raw.splitlines()[0].strip().strip('"').strip() if raw else ""
+        return rewritten or query
+    except Exception:
+        return query
+
+
 @st.cache_resource(show_spinner="Loading local RAG resources...")
 def load_resources() -> dict[str, Any]:
     if not INDEX_PATH.exists():
@@ -146,8 +196,16 @@ def retrieve_for_query(query: str, resources: dict[str, Any]):
     )
 
 
-def show_sources(results, best_score: float, decision: str) -> None:
+def show_sources(
+    results,
+    best_score: float,
+    decision: str,
+    search_query: str | None = None,
+    raw_query: str | None = None,
+) -> None:
     with st.expander("Retrieved sources", expanded=False):
+        if search_query and raw_query and search_query != raw_query:
+            st.caption(f"Rewritten search query: {search_query!r}")
         st.caption(
             f"Confidence: best_rerank_score={best_score:.3f} "
             f"(gate={RERANK_GATE}) -> {decision}"
@@ -205,7 +263,8 @@ def main() -> None:
 
     with st.chat_message("assistant"):
         with st.spinner("Retrieving local context..."):
-            results, best_score = retrieve_for_query(query, resources)
+            search_query = rewrite_query_with_history(resources["chat_client"], query, history)
+            results, best_score = retrieve_for_query(search_query, resources)
 
         should_abstain = best_score < RERANK_GATE or is_out_of_scope_security_query(query)
         decision = "abstained" if should_abstain else "answered"
@@ -213,7 +272,7 @@ def main() -> None:
         if should_abstain:
             answer = abstention_answer(query)
             st.markdown(answer)
-            show_sources([], best_score, decision)
+            show_sources([], best_score, decision, search_query, query)
         else:
             context = format_context(results)
             sources = format_sources(results)
@@ -227,7 +286,7 @@ def main() -> None:
                 source_line = f"\n\nSources: {sources}"
                 st.markdown(source_line)
                 answer += source_line
-            show_sources(results, best_score, decision)
+            show_sources(results, best_score, decision, search_query, query)
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
 
