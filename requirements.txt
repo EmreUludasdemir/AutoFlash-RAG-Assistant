@@ -9,3 +9,4 @@ streamlit              # local web UI
 # sqlite-vec            # local vector store + FTS5 hybrid search
 sentence-transformers  # cross-encoder reranking (Week 3 stretch)
 # ragas                 # RAG evaluation (Week 4 stretch)
+pytest                 # unit tests for pure retrieval/gate/security logic
