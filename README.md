@@ -2,9 +2,9 @@
 
 A **fully offline** retrieval-augmented generation (RAG) assistant for **ECU diagnostics and UDS engineering knowledge**, running entirely on-device with [Microsoft Foundry Local](https://learn.microsoft.com/en-us/azure/foundry-local/). Ask questions about UDS services, OBD-II, CAN, DTCs, and ECU reflashing concepts in **English or Turkish** and get grounded, source-cited answers — with the system safely abstaining on out-of-scope requests.
 
-**Author:** Emre [Soyadı] · [GitHub](https://github.com/<kullanıcı-adı>) · [LinkedIn](https://linkedin.com/in/<profil>)
+**Author:** Emre Uludaşdemir · [GitHub](https://github.com/EmreUludasdemir) · [LinkedIn](https://www.linkedin.com/in/emre-uluda%C5%9Fdemir-297902284/)
 
-> Replace the placeholders above with your real name and profile links before publishing.
+> Still to fill in before publishing: the demo video link below, and a `LICENSE` file (see [License](#license)).
 
 ---
 
