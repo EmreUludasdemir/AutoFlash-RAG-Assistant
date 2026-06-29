@@ -8,6 +8,7 @@ ignored and can be rebuilt.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from pathlib import Path
@@ -15,11 +16,11 @@ from pathlib import Path
 import pymupdf4llm
 from foundry_setup import initialize_manager, load_model_with_webgpu_fallback
 
+from config import APP_NAME, EMBEDDING_MODEL, INDEX_PATH, configure_logging
 
-APP_NAME = "autoflash_rag"
-EMBEDDING_MODEL = "qwen3-embedding-0.6b"
+logger = logging.getLogger(__name__)
+
 RAW_DIR = Path("data/raw")
-INDEX_PATH = Path("data/index.json")
 SUPPORTED_EXTENSIONS = {".pdf", ".md", ".rst"}
 BATCH_SIZE = 32
 CHUNK_TOKEN_TARGET = 450
@@ -199,7 +200,11 @@ def embed_records(records: list[dict[str, object]]) -> float | None:
                 first_batch_latency_ms = elapsed_ms
             for record, item in zip(batch, response.data):
                 record["embedding"] = item.embedding
-            print(f"Embedded {min(start + len(batch), len(records))}/{len(records)} chunks.")
+            logger.info(
+                "Embedded %d/%d chunks.",
+                min(start + len(batch), len(records)),
+                len(records),
+            )
     finally:
         model.unload()
 
@@ -215,18 +220,19 @@ def write_index(records: list[dict[str, object]], index_path: Path = INDEX_PATH)
 
 
 def main() -> None:
+    configure_logging()
     files = discover_files()
     records = make_records(files)
     first_batch_latency_ms = embed_records(records)
     write_index(records)
 
-    print(f"Files processed: {len(files)}")
-    print(f"Chunks indexed: {len(records)}")
-    print(f"Output path: {INDEX_PATH.as_posix()}")
+    logger.info("Files processed: %d", len(files))
+    logger.info("Chunks indexed: %d", len(records))
+    logger.info("Output path: %s", INDEX_PATH.as_posix())
     if first_batch_latency_ms is None:
-        print("First batch embedding latency: n/a")
+        logger.info("First batch embedding latency: n/a")
     else:
-        print(f"First batch embedding latency: {first_batch_latency_ms:.0f} ms")
+        logger.info("First batch embedding latency: %.0f ms", first_batch_latency_ms)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,9 @@ chat model to answer with citations.
 
 from __future__ import annotations
 
+import logging
+
+from config import APP_NAME, CHAT_MODEL, EMBEDDING_MODEL, configure_logging
 from foundry_setup import initialize_manager, load_model_with_webgpu_fallback
 from retrieval import (
     INDEX_PATH,
@@ -20,11 +23,7 @@ from retrieval import (
     tokenize,
 )
 
-
-# --- Configuration ---------------------------------------------------------
-APP_NAME = "autoflash_rag"
-EMBEDDING_MODEL = "qwen3-embedding-0.6b"
-CHAT_MODEL = "phi-4-mini"
+logger = logging.getLogger(__name__)
 
 
 def is_out_of_scope_security_query(query: str) -> bool:
@@ -173,17 +172,18 @@ def is_abstention_text(answer: str) -> bool:
 
 
 def main():
+    configure_logging()
     if not INDEX_PATH.exists():
-        print(
-            f"Missing index: {INDEX_PATH.as_posix()}. "
-            "Run `python src/ingest.py` first."
+        logger.error(
+            "Missing index: %s. Run `python src/ingest.py` first.",
+            INDEX_PATH.as_posix(),
         )
         return
 
     records = load_index()
     bm25_index = build_bm25(records)
-    print(f"Loaded {len(records)} indexed chunks from {INDEX_PATH.as_posix()}.")
-    print("Built BM25 index.")
+    logger.info("Loaded %d indexed chunks from %s.", len(records), INDEX_PATH.as_posix())
+    logger.info("Built BM25 index.")
 
     # Initialize the SDK and register GPU EPs when available.
     manager = initialize_manager(APP_NAME)
@@ -195,9 +195,11 @@ def main():
         lambda p: print(f"\rDownloading embedding model: {p:.1f}%", end="", flush=True),
     )
     print()
-    print(
-        f"Embedding model loaded: {embedding_status.model_id} "
-        f"({embedding_status.device}/{embedding_status.execution_provider})"
+    logger.info(
+        "Embedding model loaded: %s (%s/%s)",
+        embedding_status.model_id,
+        embedding_status.device,
+        embedding_status.execution_provider,
     )
     embedding_client = embedding_model.get_embedding_client()
 
@@ -208,12 +210,14 @@ def main():
         lambda p: print(f"\rDownloading chat model: {p:.1f}%", end="", flush=True),
     )
     print()
-    print(
-        f"Chat model loaded: {chat_status.model_id} "
-        f"({chat_status.device}/{chat_status.execution_provider})"
+    logger.info(
+        "Chat model loaded: %s (%s/%s)",
+        chat_status.model_id,
+        chat_status.device,
+        chat_status.execution_provider,
     )
     if chat_status.used_fallback and chat_status.errors:
-        print("GPU load failed; using CPU fallback.")
+        logger.warning("GPU load failed; using CPU fallback.")
     chat_client = chat_model.get_chat_client()
 
     print("\nModels loaded. Ready for questions. Type 'quit' to exit.\n")
@@ -241,13 +245,15 @@ def main():
         )
         should_abstain = best_score < RERANK_GATE
         decision = "abstained" if should_abstain else "answered"
-        print(
-            f"Confidence: best_rerank_score={best_score:.3f} "
-            f"(gate={RERANK_GATE}) -> {decision}"
+        logger.info(
+            "Confidence: best_rerank_score=%.3f (gate=%s) -> %s",
+            best_score,
+            RERANK_GATE,
+            decision,
         )
 
         if should_abstain:
-            print("Retrieved sources: none")
+            logger.info("Retrieved sources: none")
             messages = [
                 {
                     "role": "system",
@@ -277,9 +283,10 @@ def main():
         context = format_context(results)
         sources = format_sources(results)
 
-        print("Retrieved sources:")
-        for result in results:
-            print(f"- {source_label(result.record)}")
+        logger.info(
+            "Retrieved sources: %s",
+            "; ".join(source_label(result.record) for result in results),
+        )
 
         if is_out_of_scope_security_query(query):
             print(
@@ -339,7 +346,7 @@ def main():
     # Clean up
     embedding_model.unload()
     chat_model.unload()
-    print("Models unloaded. Done!")
+    logger.info("Models unloaded. Done!")
 
 
 if __name__ == "__main__":

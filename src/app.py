@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from foundry_setup import initialize_manager, load_model_with_webgpu_fallback  # noqa: E402
+from config import configure_logging  # noqa: E402
 from main import (  # noqa: E402
     APP_NAME,
     CHAT_MODEL,
@@ -35,6 +37,8 @@ from retrieval import (  # noqa: E402
     source_label,
     tokenize,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def language_instruction(query: str) -> str:
@@ -167,9 +171,10 @@ def load_resources() -> dict[str, Any]:
     chat_client = chat_model.get_chat_client()
 
     reranker = get_reranker()
-    print(
-        "Streamlit resource init complete: "
-        f"{len(records)} chunks, BM25, Foundry models, CPU CrossEncoder loaded."
+    logger.info(
+        "Streamlit resource init complete: %d chunks, BM25, Foundry models, "
+        "CPU CrossEncoder loaded.",
+        len(records),
     )
 
     return {
@@ -219,6 +224,7 @@ def show_sources(
 
 
 def main() -> None:
+    configure_logging()
     st.set_page_config(
         page_title="AutoFlash RAG Assistant",
         layout="wide",
