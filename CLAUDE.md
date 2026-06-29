@@ -36,15 +36,31 @@ Out-of-scope queries **must abstain**, never fabricate.
 - `get_model_variant(...)` returning `None` for GPU ids was caused by the SDK
   catalog not exposing GPU variants before EP registration, not by a colon-id
   format issue.
-- The app now calls [src/foundry_setup.py](src/foundry_setup.py) on startup:
-  it registers EPs (the single-name WebGPU registration path currently returns
-  an empty-name error, so it uses the all-EP workaround), prefers
-  `WebGpuExecutionProvider` variants, and falls back to CPU if GPU load fails.
-  On this machine WebGPU registration succeeds and `generic-gpu` variants are
-  visible/cached, but loading `Phi-4-mini-instruct-generic-gpu:5` currently
-  fails in the SDK runtime (`WebGPU execution provider is not supported in this
-  build` / CUDA GenAI DLL path when CUDA is also registered), so CPU fallback is
-  the stable working path.
+- **GPU is NOT achievable in this build (verified).** `onnxruntime-genai` 0.14.1
+  ships only the base `onnxruntime-genai.dll`. CUDA needs a separate
+  `onnxruntime-genai-cuda.dll` that fails to load (and has no Blackwell sm_120
+  kernels); WebGPU, once it is actually selected (CUDA out of the way), raises
+  `WebGPU execution provider is not supported in this build`. TensorRT-RTX has no
+  `phi-4-mini` variant. So **all models run on CPU.** A model's
+  `genai_config.json` may request `{"webgpu": {}}`, but Foundry's ModelManager
+  overrides EP choice by registered-EP priority (CUDA > WebGPU), which is why a
+  WebGPU variant tried the broken CUDA path.
+- **EP registration is persistent per-profile** (under `~/.<app_name>/ep`, also
+  recorded by Windows ML) and there is **no unregister API**; the single-EP
+  registration call is broken (`Unknown EP bootstrapper name(s)`), so only the
+  all-EP workaround registers anything. Once GPU EPs are registered the catalog
+  exposes GPU variants AND sorts a GPU variant first, so an unguarded
+  `get_model(alias).load()` selects an unloadable GPU variant and crashes.
+- Therefore [src/foundry_setup.py](src/foundry_setup.py) is **CPU-first**: it
+  does NOT register EPs and selects the **CPU variant explicitly**
+  (`select_variant_by_ep(model, "CPUExecutionProvider")`) so it is correct
+  whether or not GPU EPs happen to be registered. The WebGPU path
+  (registration + variant preference + CPU fallback) is retained behind the
+  opt-in env var `AUTOFLASH_TRY_WEBGPU=1` for a future SDK build that adds
+  WebGPU GenAI support. All entry points (`main.py`, `app.py`, `ingest.py`,
+  `check_setup.py`, both evals) load through this helper.
+- CPU latency: embedding ~0.9 s; chat ~8 s for a short answer, longer (the
+  historical ~53 s) only for the verbose "thorough answer" system prompt.
 
 ## Architecture (read the code at these paths)
 
