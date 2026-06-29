@@ -15,15 +15,17 @@ from typing import Any
 
 from rank_bm25 import BM25Okapi
 
+from config import (
+    BM25_CANDIDATES,
+    DENSE_CANDIDATES,
+    INDEX_PATH,
+    RERANK_CANDIDATES,
+    RERANK_GATE,
+    RERANK_MODEL,
+    RRF_K,
+    TOP_K,
+)
 
-INDEX_PATH = Path("data/index.json")
-TOP_K = 6
-DENSE_CANDIDATES = 20
-BM25_CANDIDATES = 20
-RRF_K = 60
-RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-RERANK_CANDIDATES = 20
-RERANK_GATE = 0.0
 TOKEN_RE = re.compile(r"0x[0-9a-f]+|[^\W_]+", re.IGNORECASE | re.UNICODE)
 _RERANKER = None
 
